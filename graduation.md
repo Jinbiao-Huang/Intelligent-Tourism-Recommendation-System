@@ -214,3 +214,181 @@ erDiagram
 	COLLAB_ITINERARIES ||--o{ COLLAB_ITINERARY_CHANGES : has
 ```
 
+# 6 可解释推荐与预算约束的多日行程生成设计与实现
+
+本章围绕 POI 推荐算法的公式、参数含义与工程化实现进行总结，强调可解释性与预算约束的联动效果。
+
+## 6.3 POI 推荐算法公式与参数影响（八点总结）
+
+### 6.3.1 推荐流程与数据链路
+
+推荐链路遵循“多关键词检索 -> 候选池聚合 -> 评分排序 -> 多样化抽样 -> 结果解释输出”的流程。首先根据类别与偏好构造查询计划并分页聚合候选 POI；随后对候选池计算综合评分并排序；再通过类型分桶轮询实现多样化；最后输出推荐列表及理由，同时为后续行程生成提供可复用的排序结果。
+
+### 6.3.2 综合评分公式与权重配置
+
+综合评分采用线性加权模型：
+
+$$
+S = w_r \cdot s_r + w_d \cdot s_d + w_i \cdot s_i + w_b \cdot s_b + w_o \cdot s_o
+$$
+
+其中 $S$ 为最终得分，$s_r$、$s_d$、$s_i$、$s_b$、$s_o$ 分别表示评分、距离、兴趣、预算与开放时间得分；$w_*$ 为权重。权重由推荐侧重参数 `recommend_focus` 决定：当偏好口碑时提升 $w_r$，当偏好距离时提升 $w_d$，其余权重保持均衡以确保推荐稳定性。
+
+### 6.3.3 子评分定义与参数意义
+
+评分得分采用 $s_r = rating/5$，当评分缺失时使用中性值 0.70，避免缺失信息导致极端惩罚。距离得分采用线性衰减：
+
+$$
+s_d = 1 - \frac{\min(distance, 12000)}{12000}
+$$
+
+兴趣得分基于偏好关键词命中率：
+
+$$
+s_i = \frac{\text{命中关键词数量}}{\text{关键词总数}}
+$$
+
+预算得分根据费用与目标预算的偏离程度计算；低于预算时保持较高分值，上浮时逐步惩罚以抑制超预算推荐。开放时间得分依据营业时段与到访时间匹配程度赋值，明确开放时给高分，未知或不匹配时给中性或低分。上述子评分共同构成可解释的评分结构，使推荐结果可追溯、可调参。
+
+### 6.3.4 预算目标与城市因子
+
+日预算由总预算与天数确定：
+
+$$
+daily\_budget = \frac{total\_budget}{days}
+$$
+
+类别预算目标采用比例系数控制，并引入城市消费因子 $f_{city}$ 校正不同城市的消费水平：
+
+$$
+budget\_target = \max(budget\_floor, daily\_budget \cdot ratio \cdot f_{city})
+$$
+
+其中景点类比例更敏感于城市层级，餐饮与住宿采用相对稳定的比例。城市因子使得一线与新一线城市的景点预算上调，避免因预算过低导致推荐质量下降。
+
+### 6.3.5 多样化抽样策略
+
+在评分排序后，引入类型分桶轮询策略：将 POI 按主类型聚类并轮流抽取，以降低同质化堆叠。该策略在不显著牺牲高分排序的前提下提升内容多样性，避免推荐列表被单一类别占满。
+
+### 6.3.6 费用估算与校准机制
+
+对于缺失或异常费用的 POI，采用预算区间与关键词锚点进行估算，并引入可复现的轻微波动：
+
+$$
+value = clamp(anchor + jitter, low, high)
+$$
+
+其中 $anchor$ 为预算锚点或关键词锚点，$low/high$ 为该类别的预算区间上下界。若原始费用过高或过低，则触发校准机制回退到估算值，以保证费用更符合目标预算并减少异常值影响。
+
+### 6.3.7 候选池扩增与查询计划
+
+为降低候选池不足风险，采用多关键词查询计划与分页聚合策略，并在必要时使用周边检索补量。该策略提高了候选池覆盖度，特别是在启用全局去重或行程天数较多时，能有效减少“自由探索”兜底场景。
+
+### 6.3.8 去重规则与唯一性控制
+
+去重采用“名称 + 地址 + 坐标”的组合特征生成唯一键，对重复 POI 进行过滤。该策略在保留多样性的同时提升推荐列表质量，避免相同地点因名称或格式差异被重复展示。
+
+# 8 系统测试与结果分析
+
+## 8.2 功能测试
+
+功能测试以前端用户路径为主，重点覆盖“未登录访问保护页 -> 跳转登录页”“已登录访问首页 -> 展示行程生成界面”等关键流程。测试采用 Playwright 执行端到端场景，避免依赖后端接口即可完成核心页面渲染与路由校验。
+
+功能测试代码位于 [vue-graduation-design/e2e/functional.spec.ts](vue-graduation-design/e2e/functional.spec.ts)。
+
+```ts
+import { test, expect } from '@playwright/test'
+
+test('redirects unauthenticated users to auth page', async ({ page }) => {
+	await page.goto('/')
+	await expect(page).toHaveURL(/\/auth$/)
+	await expect(page.getByRole('heading', { name: '欢迎回来' })).toBeVisible()
+})
+
+test('shows planner page when session is present', async ({ page }) => {
+	await page.addInitScript(() => {
+		sessionStorage.setItem('authToken', 'test-token')
+		sessionStorage.setItem(
+			'user',
+			JSON.stringify({ id: 1, username: 'TestUser', email: 'test@example.com', isAdmin: false })
+		)
+	})
+
+	await page.goto('/')
+	await expect(page).toHaveURL(/\/$/)
+	await expect(page.getByRole('heading', { name: '生成你的协作行程' })).toBeVisible()
+	await expect(page.getByText('协作状态')).toBeVisible()
+})
+```
+
+使用方式如下（在前端目录执行）：
+
+```bash
+cd vue-graduation-design
+npm run test:e2e
+```
+
+说明：测试配置由 [vue-graduation-design/playwright.config.ts](vue-graduation-design/playwright.config.ts) 提供，默认会在本地启动 Vite 开发服务器（非 CI 环境）。
+
+## 8.3 性能测试
+
+性能测试以首页渲染为目标，采集 DOMContentLoaded、Load Event、First Contentful Paint（FCP）等指标，确保在常见开发环境下满足可用的加载体验。测试脚本基于 Playwright 的 `performance` API 获取导航时间与绘制节点。
+
+性能测试代码位于 [vue-graduation-design/e2e/performance.spec.ts](vue-graduation-design/e2e/performance.spec.ts)。
+
+```ts
+import { test, expect } from '@playwright/test'
+
+test('captures homepage performance timing', async ({ page }) => {
+	await page.addInitScript(() => {
+		sessionStorage.setItem('authToken', 'test-token')
+		sessionStorage.setItem(
+			'user',
+			JSON.stringify({ id: 1, username: 'TestUser', email: 'test@example.com', isAdmin: false })
+		)
+	})
+
+	await page.goto('/', { waitUntil: 'load' })
+
+	const metrics = await page.evaluate(() => {
+		const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined
+		const paints = performance.getEntriesByType('paint') as PerformanceEntry[]
+		const fcpEntry = paints.find((entry) => entry.name === 'first-contentful-paint')
+
+		return {
+			domContentLoaded: navigation ? navigation.domContentLoadedEventEnd : null,
+			loadEventEnd: navigation ? navigation.loadEventEnd : null,
+			fcp: fcpEntry ? fcpEntry.startTime : null
+		}
+	})
+
+	expect(metrics.domContentLoaded).not.toBeNull()
+	expect(metrics.loadEventEnd).not.toBeNull()
+
+	if (metrics.domContentLoaded !== null) {
+		expect(metrics.domContentLoaded).toBeLessThan(5000)
+	}
+	if (metrics.loadEventEnd !== null) {
+		expect(metrics.loadEventEnd).toBeLessThan(8000)
+	}
+
+	if (metrics.fcp !== null) {
+		expect(metrics.fcp).toBeLessThan(4000)
+	}
+})
+```
+
+使用方式如下（在前端目录执行）：
+
+```bash
+cd vue-graduation-design
+npm run test:e2e
+```
+
+如果只运行性能测试用例，可使用：
+
+```bash
+cd vue-graduation-design
+npx playwright test e2e/performance.spec.ts
+```
+
