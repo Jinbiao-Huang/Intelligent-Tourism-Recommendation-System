@@ -1476,7 +1476,7 @@ def create_tour_plan():
     """创建旅游行程"""
     try:
         user_id = int(get_jwt_identity())
-        data = request.get_json()
+        data = request.get_json() or {}
         
         # 验证输入
         if not all(k in data for k in ['destination', 'start_date', 'end_date']):
@@ -1488,12 +1488,19 @@ def create_tour_plan():
 
         ensure_itinerary_records_table(conn)
         
+        preferences = data.get('preferences')
+        plan_data = data.get('plan_data')
+        if isinstance(preferences, (list, dict)):
+            preferences = json.dumps(preferences, ensure_ascii=False)
+        if isinstance(plan_data, (list, dict)):
+            plan_data = json.dumps(plan_data, ensure_ascii=False)
+
         cursor = conn.cursor()
         cursor.execute(
             """INSERT INTO tour_plans (user_id, destination, start_date, end_date, budget, preferences, plan_data)
                VALUES (%s, %s, %s, %s, %s, %s, %s)""",
             (user_id, data['destination'], data['start_date'], data['end_date'],
-             data.get('budget'), data.get('preferences'), data.get('plan_data'))
+             data.get('budget'), preferences, plan_data)
         )
         conn.commit()
         

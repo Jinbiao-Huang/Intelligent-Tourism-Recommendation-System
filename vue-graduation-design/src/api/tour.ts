@@ -58,6 +58,15 @@ export interface ItineraryRecordPayload {
 	edited_to?: string
 }
 
+export interface TourPlanPayload {
+	destination: string
+	start_date: string
+	end_date: string
+	budget?: number
+	preferences?: string[]
+	plan_data?: DayPlan[]
+}
+
 export interface CollabMember {
 	user_id: number
 	username: string
@@ -125,6 +134,10 @@ export const tourAPI = {
 
 	saveItineraryRecord: (payload: ItineraryRecordPayload) => {
 		return api.post('/itinerary/records', payload)
+	},
+
+	createTourPlan: (payload: TourPlanPayload) => {
+		return api.post('/tours', payload)
 	},
 
 	createCollabSession: (payload: {

@@ -177,6 +177,29 @@ const persistItineraryRecord = async (payload: {
   }
 }
 
+const persistTourPlan = async (payload: {
+  destination: string
+  days: number
+  budget: number
+  preferences: string[]
+  plans: DayPlan[]
+  visitDate: string
+}) => {
+  try {
+    const range = buildTourDateRange(payload.visitDate, payload.days)
+    await tourAPI.createTourPlan({
+      destination: payload.destination,
+      start_date: range.startDate,
+      end_date: range.endDate,
+      budget: payload.budget,
+      preferences: payload.preferences,
+      plan_data: payload.plans
+    })
+  } catch {
+    // 行程落库失败不阻塞主流程
+  }
+}
+
 const mergeCollabChanges = (incoming: CollabChangeLog[] = []) => {
   if (!incoming.length) {
     return
@@ -715,6 +738,35 @@ const resolveVisitWeekday = (visitDate: string) => {
   return day === 0 ? 6 : day - 1
 }
 
+const formatDate = (date: Date) => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const resolveStartDate = (visitDate: string) => {
+  const text = String(visitDate || '').trim()
+  if (!text) {
+    return new Date()
+  }
+  const parsed = new Date(`${text}T00:00:00`)
+  if (Number.isNaN(parsed.getTime())) {
+    return new Date()
+  }
+  return parsed
+}
+
+const buildTourDateRange = (visitDate: string, days: number) => {
+  const start = resolveStartDate(visitDate)
+  const safeDays = Math.max(1, Math.floor(days || 1))
+  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + safeDays - 1)
+  return {
+    startDate: formatDate(start),
+    endDate: formatDate(end)
+  }
+}
+
 const getOpeningSuggestion = (activity: PlanItem) => {
   const hint = String(activity.opening_hint || '').trim()
   if (hint) {
@@ -763,6 +815,14 @@ const handleGenerate = async () => {
       destination: queryForm.destination,
       days: totalDays,
       hasEditedDestination: false
+    })
+    await persistTourPlan({
+      destination: queryForm.destination,
+      days: totalDays,
+      budget: queryForm.budget,
+      preferences: queryForm.preferences,
+      plans: response.data.plans || [],
+      visitDate: queryForm.visitDate
     })
 
     try {
