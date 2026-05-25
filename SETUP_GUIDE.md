@@ -59,6 +59,9 @@ CREATE DATABASE tour_planning CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 #### 配置后端环境
 
+cd vue-graduation-design
+npm run dev
+
 ```bash
 cd backend
 
@@ -86,6 +89,27 @@ pip install -r requirements.txt
 # 启动后端服务
 python app.py
 ```
+使用方式如下（在前端目录执行）：
+
+```bash
+cd vue-graduation-design
+npm run test:e2e
+```
+
+如果只运行功能能测试用例，可使用：
+
+```bash
+cd vue-graduation-design
+npx playwright test e2e/functionality.spec.ts
+```
+
+如果只运行性能测试用例，可使用：
+
+```bash
+cd vue-graduation-design
+npx playwright test e2e/performance.spec.ts
+```
+
 
 后端服务将运行在 `http://localhost:5000`
 
