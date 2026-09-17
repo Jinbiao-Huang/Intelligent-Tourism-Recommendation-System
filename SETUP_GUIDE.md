@@ -1,5 +1,7 @@
 # 旅游行程规划系统 - 快速开始指南
 
+多环境配置规范：[docs/ENVIRONMENT_CONFIG.md](docs/ENVIRONMENT_CONFIG.md)
+
 ## 项目结构
 
 ```

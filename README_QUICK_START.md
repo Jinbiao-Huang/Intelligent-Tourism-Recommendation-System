@@ -1,5 +1,7 @@
 # 前端快速启动
 
+API 文档：[docs/API.md](docs/API.md)
+
 ## 安装步骤
 
 ```bash
